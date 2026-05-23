@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+*.pyo
+temp_kb_export/
+temp_yuque_export/
+proxy_config.json
+*.zip
