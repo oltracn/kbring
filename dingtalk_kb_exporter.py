@@ -173,17 +173,27 @@ class DingTalkKBExporter:
         return res.json()
 
     def crawl_wiki_tree(self):
-        """Crawl the entire directory structure to find all leaf pages."""
+        """Crawl the entire directory structure to find all pages at any depth.
+        
+        DingTalk wiki nodes can be:
+        - folder: a pure directory, no document content, may have children
+        - file (hasChildren=False): a leaf document
+        - file (hasChildren=True): a parent document that also has child documents
+          These must be downloaded as pages AND recursed into for their children.
+          The file itself is saved as ParentName/ParentName.md so its children
+          can sit alongside it in the same folder.
+        """
         print("4. Crawling folder hierarchy to list all pages...")
         all_pages = []
-        queue = [(self.root_dentry_id, [])]
-        visited_folders = set()
+        # queue entries: (dentryId, parentPath, is_file_parent)
+        queue = [(self.root_dentry_id, [], False)]
+        visited = set()
         
         while queue:
-            curr_id, path = queue.pop(0)
-            if curr_id in visited_folders:
+            curr_id, path, _ = queue.pop(0)
+            if curr_id in visited:
                 continue
-            visited_folders.add(curr_id)
+            visited.add(curr_id)
             
             has_more = True
             load_more_id = None
@@ -197,30 +207,53 @@ class DingTalkKBExporter:
                 children = data.get("children", [])
                 
                 for child in children:
-                    name = child.get("name")
+                    name = child.get("name", "")
                     uuid = child.get("dentryUuid")
                     child_id = child.get("dentryId")
                     dtype = child.get("dentryType")
-                    has_children = child.get("hasChildren")
-                    
-                    item = {
-                        "name": name,
-                        "dentryUuid": uuid,
-                        "dentryId": child_id,
-                        "dentryType": dtype,
-                        "parentPath": path
-                    }
+                    has_children = child.get("hasChildren", False)
                     
                     if dtype == 'folder':
-                        if has_children:
-                            queue.append((child_id, path + [name]))
+                        # Pure folder: recurse but don't download content
+                        if has_children and child_id not in visited:
+                            queue.append((child_id, path + [name], False))
                     elif dtype == 'file':
-                        all_pages.append(item)
+                        if has_children:
+                            # Parent document: download its content AND recurse into children.
+                            # Children will be placed inside a subfolder named after this file,
+                            # and this file itself is stored as ParentName/ParentName.md.
+                            clean = name
+                            if clean.lower().endswith(".adoc"):
+                                clean = clean[:-5]
+                            clean = self.clean_filename(clean)
+                            # Record this node as a page, with is_parent=True so run() knows
+                            # to nest it inside its own subfolder
+                            all_pages.append({
+                                "name": name,
+                                "dentryUuid": uuid,
+                                "dentryId": child_id,
+                                "dentryType": dtype,
+                                "parentPath": path,
+                                "is_parent": True,  # save as clean/clean.md
+                            })
+                            if child_id not in visited:
+                                # Children go under path + [clean folder name]
+                                queue.append((child_id, path + [clean], False))
+                        else:
+                            # Leaf document
+                            all_pages.append({
+                                "name": name,
+                                "dentryUuid": uuid,
+                                "dentryId": child_id,
+                                "dentryType": dtype,
+                                "parentPath": path,
+                                "is_parent": False,
+                            })
                 
                 has_more = data.get("hasMore", False)
                 load_more_id = data.get("loadMoreId")
                 
-        print(f"Tree traversal complete. Found {len(all_pages)} pages in {len(visited_folders)} folders.")
+        print(f"Tree traversal complete. Found {len(all_pages)} pages across {len(visited)} nodes.")
         return all_pages
 
     def render_ast_node(self, node):
@@ -243,6 +276,9 @@ class DingTalkKBExporter:
         elif ntype == 'img':
             src = props.get("src", "")
             name = props.get("name", "") or "image"
+            # Ensure absolute URL for image src
+            if src and not src.startswith("http"):
+                src = "https://alidocs.dingtalk.com" + src
             return f"![{name}]({src})\n\n"
         elif ntype == 'span':
             text = rendered_children
@@ -363,33 +399,39 @@ class DingTalkKBExporter:
                 
                 if success:
                     success_count += 1
-                    # Construct folders path
+                    # Construct folder path from parentPath parts
                     clean_path_parts = []
                     for p in page_item["parentPath"]:
                         part = p
                         if part.lower().endswith(".adoc"):
                             part = part[:-5]
                         clean_path_parts.append(self.clean_filename(part))
-                        
-                    folder_path = os.path.join(temp_dir, *clean_path_parts)
-                    os.makedirs(folder_path, exist_ok=True)
-                    
-                    # Sanitize filename
+
+                    # Sanitize the document's own display name
                     display_name = name
                     if display_name.lower().endswith(".adoc"):
                         display_name = display_name[:-5]
-                        
                     clean_name = self.clean_filename(display_name)
-                    if not clean_name.lower().endswith(".md"):
-                        clean_name += ".md"
-                        
-                    file_path = os.path.join(folder_path, clean_name)
+
+                    if page_item.get("is_parent"):
+                        # Parent document: saved inside its own subfolder as FolderName/FolderName.md
+                        # The subfolder was already added to children's parentPath during traversal
+                        folder_path = os.path.join(temp_dir, *clean_path_parts, clean_name)
+                        md_filename = clean_name + ".md"
+                    else:
+                        # Leaf document: saved directly under its parent folder
+                        folder_path = os.path.join(temp_dir, *clean_path_parts)
+                        md_filename = clean_name + ".md" if not clean_name.lower().endswith(".md") else clean_name
+
+                    os.makedirs(folder_path, exist_ok=True)
+                    file_path = os.path.join(folder_path, md_filename)
                     with open(file_path, "w", encoding="utf-8") as f:
                         f.write(result)
                         
-                    print(f" [{idx}/{len(pages)}] Successfully fetched: {'/'.join(page_item['parentPath'] + [display_name])}")
+                    log_path = "/".join(page_item['parentPath'] + [display_name])
+                    print(f" [{idx}/{len(pages)}] OK: {log_path}")
                 else:
-                    print(f" [{idx}/{len(pages)}] FAILED to fetch: {name} (Error: {result})")
+                    print(f" [{idx}/{len(pages)}] FAILED: {name} (Error: {result})")
                     
         # 6. Zip the folder
         print(f"\n6. Packaging {success_count} files into ZIP archive...")
