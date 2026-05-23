@@ -1,0 +1,99 @@
+# Skill: DingTalk & Yuque Knowledge Base Exporters
+
+This workspace provides standalone, AI-agent friendly Python scripts to crawl and export document repositories from **DingTalk Docs (alidocs.dingtalk.com)** and **Yuque (yuque.com)** into structured Markdown ZIP archives.
+
+---
+
+## 1. URL Classification Guidelines
+
+AI agents should detect the URL pattern to run the correct script:
+
+* **DingTalk Docs**: URL matches `*alidocs.dingtalk.com*`
+  * Example: `https://alidocs.dingtalk.com/i/nodes/<node_id>`
+  * Handler: Use [dingtalk_kb_exporter.py](file:///home/oltra/project/axon/kbase/kbring/dingtalk_kb_exporter.py)
+
+* **Yuque**: URL matches `*yuque.com*`
+  * Example: `https://www.yuque.com/<namespace>/<book_slug>`
+  * Handler: Use [yuque_kb_exporter.py](file:///home/oltra/project/axon/kbase/kbring/yuque_kb_exporter.py)
+
+---
+
+## 2. Environment & Dependencies
+
+Both scripts require Python 3 and the `requests` library.
+
+Install dependencies:
+```bash
+pip install requests
+```
+
+---
+
+## 3. DingTalk Knowledge Base Exporter
+
+- **Script**: [dingtalk_kb_exporter.py](file:///home/oltra/project/axon/kbase/kbring/dingtalk_kb_exporter.py)
+- **Features**:
+  - Automatically fetches the session context, XSRF token, and temporary A-Token.
+  - Traverses the entire wiki directory tree recursively.
+  - Translates document AST nodes into clean Markdown.
+  - Preserves remote image URLs in the Markdown without downloading them.
+  - Automatically strips `.adoc` suffixes from names to ensure clean outputs.
+
+### CLI Usage
+```bash
+python3 dingtalk_kb_exporter.py "<DINGTALK_KB_URL>" [options]
+```
+
+#### Options:
+- `-o`, `--output`: Output ZIP file path (defaults to the knowledge base title).
+- `-w`, `--workers`: Number of concurrent downloader threads (default: `5`).
+
+#### Example:
+```bash
+python3 dingtalk_kb_exporter.py "<DINGTALK_KB_URL>" -w 10
+```
+
+### Programmatic Usage
+```python
+from dingtalk_kb_exporter import DingTalkKBExporter
+
+exporter = DingTalkKBExporter("<DINGTALK_KB_URL>")
+exporter.run(output_zip_path="my_dingtalk_export.zip")
+```
+
+---
+
+## 4. Yuque Knowledge Base Exporter
+
+- **Script**: [yuque_kb_exporter.py](file:///home/oltra/project/axon/kbase/kbring/yuque_kb_exporter.py)
+- **Features**:
+  - Fetches the repository Table of Contents (TOC) using decoded embedded page JSON.
+  - Organizes pages in structured directory trees. Parent pages are saved inside their respective folders (e.g. `Parent/Parent.md` inside `Parent/`).
+  - Prepend the page title as an H1 heading (`# Title`) inside each Markdown document.
+  - Downloads all embedded images concurrently into a shared `images/` directory using deterministic MD5 hashes of their URLs.
+  - Dynamically calculates relative image links (e.g. `../images/xxx.png`) based on file nesting depth.
+  - Cleans styling HTML tags (`<font>`, `<span>`, `<br>`, empty anchors) and Yuque block alert syntax wrappers (`:::danger`, `:::info`, `:::`).
+  - Cleans up "fake" code blocks that contain Chinese prose instead of programming code.
+
+### CLI Usage
+```bash
+python3 yuque_kb_exporter.py "<YUQUE_KB_URL>" [options]
+```
+
+#### Options:
+- `-o`, `--output`: Output ZIP file path (defaults to the book title).
+- `-w`, `--workers`: Number of concurrent downloader threads (default: `5`).
+- `--no-images`: Disable local image downloading (keeps original remote URLs).
+
+#### Example:
+```bash
+python3 yuque_kb_exporter.py "<YUQUE_KB_URL>"
+```
+
+### Programmatic Usage
+```python
+from yuque_kb_exporter import YuqueKBExporter
+
+exporter = YuqueKBExporter("<YUQUE_KB_URL>")
+exporter.run(output_zip_path="my_yuque_export.zip")
+```
