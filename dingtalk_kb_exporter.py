@@ -363,7 +363,13 @@ class DingTalkKBExporter:
             else:
                 for block in body:
                     md_content += self.render_ast_node(block)
-                    
+
+            # Prepend document title as H1 heading
+            display_name = name
+            if display_name.lower().endswith(".adoc"):
+                display_name = display_name[:-5]
+            md_content = f"# {display_name}\n\n" + md_content
+
             return name, True, md_content
         except Exception as e:
             return name, False, str(e)
