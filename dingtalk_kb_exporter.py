@@ -77,6 +77,16 @@ class DingTalkKBExporter:
         """Sanitize filename to be safe for Windows/Linux filesystems."""
         return re.sub(r'[\/*?:"<>|]', " ", name).strip()
 
+    def extract_fallback_title(self, md_content: str) -> str:
+        """Extract the first non-empty, non-heading-marker line from markdown body as a fallback title."""
+        for line in md_content.splitlines():
+            line = line.strip()
+            # Strip leading markdown heading markers
+            line = re.sub(r'^#+\s*', '', line)
+            if line:
+                return line
+        return "Untitled"
+
     def fetch_initial_page(self):
         """Fetch start URL, extract cookies, and read space meta JSON."""
         print("1. Initializing session and cookies...")
@@ -368,6 +378,12 @@ class DingTalkKBExporter:
             display_name = name
             if display_name.lower().endswith(".adoc"):
                 display_name = display_name[:-5]
+            display_name = display_name.strip()
+
+            # If title is empty or generic, extract from first line of body
+            if not display_name or display_name.lower() in ('untitled', 'unnamed', 'noname'):
+                display_name = self.extract_fallback_title(md_content)
+
             md_content = f"# {display_name}\n\n" + md_content
 
             return name, True, md_content

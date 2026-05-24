@@ -81,6 +81,16 @@ class YuqueKBExporter:
         cleaned = re.sub(r'_+', '_', cleaned)
         return cleaned.strip()
 
+    def extract_fallback_title(self, md_content: str) -> str:
+        """Extract the first non-empty, non-heading-marker line from markdown body as a fallback title."""
+        for line in md_content.splitlines():
+            line = line.strip()
+            # Strip leading markdown heading markers
+            line = re.sub(r'^#+\s*', '', line)
+            if line:
+                return line
+        return "Untitled"
+
     def fetch_book_metadata(self) -> dict:
         """Fetch the book homepage and extract JavaScript decoded metadata."""
         print(f"1. Fetching book page: {self.book_url} ...")
@@ -233,10 +243,15 @@ class YuqueKBExporter:
             # Clean non-code blocks
             md_content = self.clean_non_code_blocks(md_content)
             
+            # Determine effective title, falling back to first body line if empty/generic
+            effective_title = item_title.strip() if item_title else ""
+            if not effective_title or effective_title.lower() in ('untitled', 'unnamed', 'noname'):
+                effective_title = self.extract_fallback_title(md_content)
+
             # Prepend document title as Level-1 Heading if not already present
-            title_header = f"# {item_title}"
+            title_header = f"# {effective_title}"
             if not md_content or not md_content.lstrip().startswith(title_header):
-                md_content = f"# {item_title}\n\n" + (md_content or "")
+                md_content = f"# {effective_title}\n\n" + (md_content or "")
             
             # Handle image downloads if enabled
             if self.download_images and md_content:
